@@ -1,55 +1,84 @@
 import requests
 import streamlit as st
+import re
+
 
 def extract_id(url: str):
-    """
-    Uzima samo OLX listing ID iz URL-a
-    npr: https://olx.ba/artikal/76576474 -> 76576474
-    """
-    url = url.strip().rstrip("/")
-    return url.split("/")[-1]
+    url = url.strip()
+
+    # hvata prvi 6+ digit broj (OLX ID)
+    match = re.search(r'(\d{6,})', url)
+    return match.group(1) if match else None
 
 
 def get_listing_state(listing_id):
-    api_url = f"https://olx.ba/api/listings/{listing_id}"
+    url = f"https://olx.ba/api/listings/{listing_id}"
 
     headers = {
         "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Referer": "https://olx.ba/"
     }
 
     try:
-        r = requests.get(api_url, headers=headers, timeout=10)
-        r.raise_for_status()
-        return r.json().get("state")
+        r = requests.get(url, headers=headers, timeout=10)
+
+        # 🔴 DEBUG (uključi ako treba)
+        # st.write(listing_id, r.status_code, r.text[:200])
+
+        if r.status_code != 200:
+            return "ERROR_STATUS"
+
+        # ako nije JSON → blokada
+        try:
+            data = r.json()
+        except:
+            return "NOT_JSON"
+
+        # 🔥 višestruki fallback (OLX nije konzistentan)
+        state = (
+            data.get("state")
+            or data.get("data", {}).get("state")
+            or data.get("listing", {}).get("state")
+        )
+
+        return state if state else "NO_STATE"
+
     except:
-        return None
+        return "REQUEST_FAIL"
 
 
-st.title("OLX filter - samo NOVO")
+# ---------------- STREAMLIT ---------------- #
 
-urls = st.text_area("Unesi OLX URL-ove (jedan po liniji):")
+st.title("OLX filter - NOVO / USED")
+
+urls = st.text_area("Unesi OLX URL-ove:")
 
 if urls:
     urls_list = [u.strip() for u in urls.split("\n") if u.strip()]
 
     results = []
-    novo_links = []
+    novo = []
 
     for url in urls_list:
         listing_id = extract_id(url)
-        state = get_listing_state(listing_id)
 
+        if not listing_id:
+            results.append((url, None, "BAD_URL"))
+            continue
+
+        state = get_listing_state(listing_id)
         results.append((url, listing_id, state))
 
         if state == "new":
-            novo_links.append(url)
+            novo.append(url)
 
     st.subheader("📊 Rezultati")
 
-    for url, lid, state in results:
-        st.write(f"{url} → {lid} → {state}")
+    for u, i, s in results:
+        st.write(f"{u} → {i} → {s}")
 
     st.subheader("🟢 SAMO NOVO")
-    for l in novo_links:
-        st.write(l)
+
+    for n in novo:
+        st.write(n)
